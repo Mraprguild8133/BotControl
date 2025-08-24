@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """
 Telegram Bot for Channel Management with Movie Search and Copyright Protection
-Main application entry point
+Main application entry point with Flask web interface
 """
 
 import os
 import logging
+import asyncio
+import threading
+import sys
+from flask import Flask, render_template, jsonify, request
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 from aiohttp import web
 from aiohttp.web_runner import GracefulExit
@@ -23,99 +27,108 @@ from bot.channel_manager import (
     channel_stats_handler
 )
 from bot.copyright_filter import message_filter_handler, add_keyword_handler, remove_keyword_handler, list_keywords_handler, test_ai_detection_handler
-from bot.config import BOT_TOKEN
-
-from flask import Flask, render_template
+from bot.config import BOT_TOKEN, DATABASE_URL
+from bot.database import Database
 
 # Configure logging
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO,
-    handlers=[
-        logging.FileHandler('bot.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+def setup_logger(name):
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.INFO)
+    
+    # Create handlers
+    file_handler = logging.FileHandler('bot.log')
+    stream_handler = logging.StreamHandler()
+    
+    # Create formatters and add it to handlers
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    file_handler.setFormatter(formatter)
+    stream_handler.setFormatter(formatter)
+    
+    # Add handlers to the logger
+    logger.addHandler(file_handler)
+    logger.addHandler(stream_handler)
+    
+    return logger
 
-async def health_check(request):
-    """Health check endpoint for Render.com"""
-    return web.Response(text="Bot is running", status=200)
+logger = setup_logger(__name__)
 
-async def webhook_handler(request):
-    """Handle webhook updates from Telegram"""
-    return web.Response(text="Webhook received", status=200)
+class MaprGuildMovieBot:
+    def __init__(self):
+        self.logger = setup_logger("MaprGuildMovieBot")
+        self.running = False
+        
+        if not BOT_TOKEN:
+            self.logger.error("BOT_TOKEN environment variable not set!")
+            raise ValueError("BOT_TOKEN environment variable not set!")
+        
+        # Initialize database
+        self.db = Database(DATABASE_URL)
+        
+        # Create Telegram application
+        self.application = Application.builder().token(BOT_TOKEN).build()
+        
+        # Register handlers
+        self._register_handlers()
+        
+        self.logger.info("Bot initialized successfully")
 
-def main():
-    """Start the bot"""
-    if not BOT_TOKEN:
-        logger.error("BOT_TOKEN environment variable not set!")
-        return
+    def _register_handlers(self):
+        """Register all Telegram bot handlers"""
+        # Basic commands
+        self.application.add_handler(CommandHandler("start", start_handler))
+        self.application.add_handler(CommandHandler("help", help_handler))
+        self.application.add_handler(CommandHandler("contact", contact_handler))
+        self.application.add_handler(CommandHandler("getid", get_id_handler))
+        
+        # Welcome message commands
+        self.application.add_handler(CommandHandler("welcome", welcome_handler))
+        self.application.add_handler(CommandHandler("setwelcome", set_welcome_handler))
+        
+        # Movie search commands
+        self.application.add_handler(CommandHandler("search", movie_search_handler))
+        self.application.add_handler(CommandHandler("download", download_handler))
+        
+        # Admin panel commands
+        self.application.add_handler(CommandHandler("admin", admin_panel_handler))
+        self.application.add_handler(CommandHandler("addadmin", add_admin_handler))
+        self.application.add_handler(CommandHandler("removeadmin", remove_admin_handler))
+        self.application.add_handler(CommandHandler("listadmins", list_admins_handler))
+        self.application.add_handler(CommandHandler("adminstats", admin_stats_handler))
+        
+        # Channel management commands
+        self.application.add_handler(CommandHandler("addchannel", add_channel_handler))
+        self.application.add_handler(CommandHandler("removechannel", remove_channel_handler))
+        self.application.add_handler(CommandHandler("listchannels", list_channels_handler))
+        self.application.add_handler(CommandHandler("channelstats", channel_stats_handler))
+        
+        # Copyright protection commands
+        self.application.add_handler(CommandHandler("addkeyword", add_keyword_handler))
+        self.application.add_handler(CommandHandler("removekeyword", remove_keyword_handler))
+        self.application.add_handler(CommandHandler("listkeywords", list_keywords_handler))
+        self.application.add_handler(CommandHandler("testai", test_ai_detection_handler))
+        
+        # Message filter for copyright protection
+        self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_filter_handler))
+        
+        # Callback query handler for inline buttons
+        async def callback_query_handler(update, context):
+            await update.callback_query.answer()
+        
+        self.application.add_handler(CallbackQueryHandler(callback_query_handler))
 
-    # Get port from environment (for Render.com deployment)
-    PORT = int(os.environ.get("PORT", 8000))
-    ENVIRONMENT = os.environ.get("ENVIRONMENT", "development")
-    
-    logger.info(f"Starting bot in {ENVIRONMENT} mode on port {PORT}")
+        # Add error handler
+        async def error_handler(update, context):
+            self.logger.error(f"Exception while handling an update: {context.error}")
+        
+        self.application.add_error_handler(error_handler)
 
-    # Create application
-    application = Application.builder().token(BOT_TOKEN).build()
+    def start_polling(self):
+        """Start the bot in polling mode"""
+        self.logger.info("🤖 Starting bot polling...")
+        self.running = True
+        self.application.run_polling()
 
-    # Basic commands
-    application.add_handler(CommandHandler("start", start_handler))
-    application.add_handler(CommandHandler("help", help_handler))
-    application.add_handler(CommandHandler("contact", contact_handler))
-    application.add_handler(CommandHandler("getid", get_id_handler))
-    
-    # Welcome message commands
-    application.add_handler(CommandHandler("welcome", welcome_handler))
-    application.add_handler(CommandHandler("setwelcome", set_welcome_handler))
-    
-    # Movie search commands
-    application.add_handler(CommandHandler("search", movie_search_handler))
-    application.add_handler(CommandHandler("download", download_handler))
-    
-    # Admin panel commands
-    application.add_handler(CommandHandler("admin", admin_panel_handler))
-    application.add_handler(CommandHandler("addadmin", add_admin_handler))
-    application.add_handler(CommandHandler("removeadmin", remove_admin_handler))
-    application.add_handler(CommandHandler("listadmins", list_admins_handler))
-    application.add_handler(CommandHandler("adminstats", admin_stats_handler))
-    
-    # Channel management commands
-    application.add_handler(CommandHandler("addchannel", add_channel_handler))
-    application.add_handler(CommandHandler("removechannel", remove_channel_handler))
-    application.add_handler(CommandHandler("listchannels", list_channels_handler))
-    application.add_handler(CommandHandler("channelstats", channel_stats_handler))
-    
-    # Copyright protection commands
-    application.add_handler(CommandHandler("addkeyword", add_keyword_handler))
-    application.add_handler(CommandHandler("removekeyword", remove_keyword_handler))
-    application.add_handler(CommandHandler("listkeywords", list_keywords_handler))
-    application.add_handler(CommandHandler("testai", test_ai_detection_handler))
-    
-    # Message filter for copyright protection
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message_filter_handler))
-    
-    # Callback query handler for inline buttons
-    async def callback_query_handler(update, context):
-        await update.callback_query.answer()
-    
-    application.add_handler(CallbackQueryHandler(callback_query_handler))
-
-    # Add error handler
-    async def error_handler(update, context):
-        logger.error(f"Exception while handling an update: {context.error}")
-    
-    application.add_error_handler(error_handler)
-    
-    logger.info("Bot started successfully!")
-    
-    # Check if running in production (Render.com) or development
-    if ENVIRONMENT == "production":
-        # ---------------- POLLING ----------------
-
-    def main():
+    def run(self):
         """Main run method"""
         try:
             self.logger.info("🔐 MaprGuild Movie Bot starting up...")
@@ -126,13 +139,39 @@ def main():
             bot_thread.start()
 
             # Start Flask web server
-            app = Flask(__name__, template_folder="template")
+            app = Flask(__name__, template_folder="templates")
 
             @app.route("/")
             def index():
                 return render_template("index.html")
 
-            app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=False)
+            @app.route("/health")
+            def health():
+                return jsonify({"status": "healthy", "bot_running": self.running})
+
+            @app.route("/stats")
+            def stats():
+                # Get basic stats from database
+                stats = {
+                    'total_users': self.db.get_total_users(),
+                    'total_channels': self.db.get_total_channels(),
+                    'total_keywords': self.db.get_total_keywords(),
+                    'blocked_messages': self.db.get_blocked_messages_count(),
+                    'bot_running': self.running
+                }
+                return jsonify(stats)
+
+            # Get port from environment (for Render.com deployment)
+            PORT = int(os.environ.get("PORT", 5000))
+            ENVIRONMENT = os.environ.get("ENVIRONMENT", "development")
+            
+            if ENVIRONMENT == "production":
+                self.logger.info("🚀 Running in production mode")
+                # In production, we need to handle both Flask and potential webhooks
+                app.run(host="0.0.0.0", port=PORT, debug=False)
+            else:
+                self.logger.info("🔧 Running in development mode")
+                app.run(host="0.0.0.0", port=PORT, debug=True)
 
         except KeyboardInterrupt:
             self.logger.info("Bot stopped by user")
@@ -148,7 +187,7 @@ def main():
 def main():
     """Main entry point"""
     try:
-        bot = MaprGuild Movie Bot()
+        bot = MaprGuildMovieBot()
         bot.run()
     except Exception as e:
         logger = setup_logger(__name__)
