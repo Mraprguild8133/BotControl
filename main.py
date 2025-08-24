@@ -27,8 +27,7 @@ from bot.channel_manager import (
     channel_stats_handler
 )
 from bot.copyright_filter import message_filter_handler, add_keyword_handler, remove_keyword_handler, list_keywords_handler, test_ai_detection_handler
-from bot.config import BOT_TOKEN, DATABASE_URL
-from bot.database import Database
+from bot.config import BOT_TOKEN,
 
 # Configure logging
 def setup_logger(name):
@@ -61,8 +60,6 @@ class MaprGuildMovieBot:
             self.logger.error("BOT_TOKEN environment variable not set!")
             raise ValueError("BOT_TOKEN environment variable not set!")
         
-        # Initialize database
-        self.db = Database(DATABASE_URL)
         
         # Create Telegram application
         self.application = Application.builder().token(BOT_TOKEN).build()
