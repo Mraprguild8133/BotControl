@@ -10,6 +10,8 @@ import asyncio
 import threading
 import sys
 from flask import Flask, render_template, jsonify, request
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.orm import DeclarativeBase
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 from aiohttp import web
 from aiohttp.web_runner import GracefulExit
@@ -27,7 +29,14 @@ from bot.channel_manager import (
     channel_stats_handler
 )
 from bot.copyright_filter import message_filter_handler, add_keyword_handler, remove_keyword_handler, list_keywords_handler, test_ai_detection_handler
-from bot.config import BOT_TOKEN,
+from bot.config import BOT_TOKEN, DATABASE_URL
+from bot.database import Database
+
+# Database setup
+class Base(DeclarativeBase):
+    pass
+
+db = SQLAlchemy(model_class=Base)
 
 # Configure logging
 def setup_logger(name):
@@ -60,15 +69,16 @@ class MaprGuildMovieBot:
             self.logger.error("BOT_TOKEN environment variable not set!")
             raise ValueError("BOT_TOKEN environment variable not set!")
         
+        # Initialize database
+        self.db = Database(DATABASE_URL)
         
         # Create Telegram application
         self.application = Application.builder().token(BOT_TOKEN).build()
         
         # Register handlers
         self._register_handlers()
-        
         self.logger.info("Bot initialized successfully")
-
+    
     def _register_handlers(self):
         """Register all Telegram bot handlers"""
         # Basic commands
@@ -112,40 +122,57 @@ class MaprGuildMovieBot:
             await update.callback_query.answer()
         
         self.application.add_handler(CallbackQueryHandler(callback_query_handler))
-
+        
         # Add error handler
         async def error_handler(update, context):
             self.logger.error(f"Exception while handling an update: {context.error}")
         
         self.application.add_error_handler(error_handler)
-
+    
     def start_polling(self):
         """Start the bot in polling mode"""
         self.logger.info("🤖 Starting bot polling...")
         self.running = True
         self.application.run_polling()
-
+    
     def run(self):
         """Main run method"""
         try:
             self.logger.info("🔐 MaprGuild Movie Bot starting up...")
             self.logger.info(f"🌐 Server binding to port {os.getenv('PORT', 5000)}")
-
+            
             # Start bot in a separate thread
             bot_thread = threading.Thread(target=self.start_polling, daemon=True)
             bot_thread.start()
-
+            
             # Start Flask web server
-            app = Flask(__name__, template_folder="templates")
-
+            app = Flask(__name__, template_folder="templates", static_folder="static")
+            
+            # Setup Flask-SQLAlchemy
+            app.secret_key = os.environ.get("FLASK_SECRET_KEY", "a_secret_key_for_bot")
+            app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
+            app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+                "pool_recycle": 300,
+                "pool_pre_ping": True,
+            }
+            db.init_app(app)
+            
+            with app.app_context():
+                import models  # Import models to create tables
+                db.create_all()
+            
             @app.route("/")
             def index():
                 return render_template("index.html")
-
+            
+            @app.route("/dashboard")
+            def dashboard():
+                return render_template("dashboard.html")
+            
             @app.route("/health")
             def health():
                 return jsonify({"status": "healthy", "bot_running": self.running})
-
+            
             @app.route("/stats")
             def stats():
                 # Get basic stats from database
@@ -157,19 +184,18 @@ class MaprGuildMovieBot:
                     'bot_running': self.running
                 }
                 return jsonify(stats)
-
-            # Get port from environment (for Render.com deployment)
+            
+            # Get port from environment (for deployment)
             PORT = int(os.environ.get("PORT", 5000))
             ENVIRONMENT = os.environ.get("ENVIRONMENT", "development")
             
             if ENVIRONMENT == "production":
                 self.logger.info("🚀 Running in production mode")
-                # In production, we need to handle both Flask and potential webhooks
                 app.run(host="0.0.0.0", port=PORT, debug=False)
             else:
                 self.logger.info("🔧 Running in development mode")
                 app.run(host="0.0.0.0", port=PORT, debug=True)
-
+                
         except KeyboardInterrupt:
             self.logger.info("Bot stopped by user")
         except Exception as e:
@@ -179,7 +205,6 @@ class MaprGuildMovieBot:
             self.running = False
             self.db.close()
             self.logger.info("🛑 Bot shutdown complete")
-
 
 def main():
     """Main entry point"""
@@ -191,6 +216,6 @@ def main():
         logger.error(f"Failed to start bot: {e}")
         sys.exit(1)
 
-
 if __name__ == "__main__":
     main()
+            
