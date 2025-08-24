@@ -115,7 +115,7 @@ def main():
     if ENVIRONMENT == "production":
         # ---------------- POLLING ----------------
 
-    def run(self):
+    def main():
         """Main run method"""
         try:
             self.logger.info("🔐 MaprGuild Movie Bot starting up...")
