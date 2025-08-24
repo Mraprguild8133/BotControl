@@ -25,6 +25,8 @@ from bot.channel_manager import (
 from bot.copyright_filter import message_filter_handler, add_keyword_handler, remove_keyword_handler, list_keywords_handler, test_ai_detection_handler
 from bot.config import BOT_TOKEN
 
+from flask import Flask, render_template
+
 # Configure logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -111,50 +113,78 @@ def main():
     
     # Check if running in production (Render.com) or development
     if ENVIRONMENT == "production":
-        # Production mode: Run health check server alongside polling
-        async def start_production_server():
-            # Create web application for health checks
-            web_app = web.Application()
-            web_app.router.add_get("/health", health_check)
-            web_app.router.add_post("/webhook", webhook_handler)
-            
-            # Create and start web server for health checks
-            runner = web.AppRunner(web_app)
-            await runner.setup()
-            site = web.TCPSite(runner, "0.0.0.0", PORT)
-            await site.start()
-            
-            logger.info(f"Health check server started on 0.0.0.0:{PORT}")
-            logger.info("Bot running in production mode with polling + health server")
-            
-            # Keep the health check server alive
+        # ---------------- POLLING ----------------
+    def start_polling(self):
+        """Start bot polling with error recovery"""
+        max_retries = 5
+        retry_delay = 10
+        
+        for attempt in range(max_retries):
             try:
-                while True:
-                    await asyncio.sleep(10)
-            except (KeyboardInterrupt, GracefulExit):
-                logger.info("Stopping health check server...")
-            finally:
-                await runner.cleanup()
-        
-        # Start health check server in background
-        import asyncio
-        import threading
-        
-        def run_health_server():
-            asyncio.run(start_production_server())
-        
-        # Start health check server in separate thread
-        health_thread = threading.Thread(target=run_health_server)
-        health_thread.daemon = True
-        health_thread.start()
-        
-        # Start bot with polling in main thread
-        logger.info("Starting bot polling in production mode")
-        application.run_polling()
-    else:
-        # Development mode: Use polling only
-        logger.info("Running in development mode with polling")
-        application.run_polling()
+                self.logger.info(f"🚀 Starting bot polling (attempt {attempt+1}/{max_retries})")
+                
+                # Start health check thread
+                health_thread = threading.Thread(target=self._health_check, daemon=True)
+                health_thread.start()
+                
+                # Start polling
+                self.bot.infinity_polling(
+                    timeout=30,
+                    long_polling_timeout=30,
+                    skip_pending=True,
+                    none_stop=True
+                )
+                break
+            except Exception as e:
+                self.logger.error(f"Polling attempt {attempt+1} failed: {e}")
+                if attempt < max_retries - 1:
+                    self.logger.info(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
+                else:
+                    self.logger.error("Max retries reached. Bot failed to start.")
+                    raise
 
-if __name__ == '__main__':
+    def run(self):
+        """Main run method"""
+        try:
+            self.logger.info("🔐 MaprGuild Movie Bot starting up...")
+            self.logger.info(f"🌐 Server binding to port {os.getenv('PORT', 5000)}")
+
+            # Start bot in a separate thread
+            bot_thread = threading.Thread(target=self.start_polling, daemon=True)
+            bot_thread.start()
+
+            # Start Flask web server
+            app = Flask(__name__, template_folder="template")
+
+            @app.route("/")
+            def index():
+                return render_template("index.html")
+
+            app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=False)
+
+        except KeyboardInterrupt:
+            self.logger.info("Bot stopped by user")
+        except Exception as e:
+            self.logger.error(f"Fatal error: {e}")
+            raise
+        finally:
+            self.running = False
+            self.db.close()
+            self.logger.info("🛑 Bot shutdown complete")
+
+
+def main():
+    """Main entry point"""
+    try:
+        bot = MaprGuild Movie Bot()
+        bot.run()
+    except Exception as e:
+        logger = setup_logger(__name__)
+        logger.error(f"Failed to start bot: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
     main()
