@@ -114,36 +114,6 @@ def main():
     # Check if running in production (Render.com) or development
     if ENVIRONMENT == "production":
         # ---------------- POLLING ----------------
-    def start_polling(self):
-        """Start bot polling with error recovery"""
-        max_retries = 5
-        retry_delay = 10
-        
-        for attempt in range(max_retries):
-            try:
-                self.logger.info(f"🚀 Starting bot polling (attempt {attempt+1}/{max_retries})")
-                
-                # Start health check thread
-                health_thread = threading.Thread(target=self._health_check, daemon=True)
-                health_thread.start()
-                
-                # Start polling
-                self.bot.infinity_polling(
-                    timeout=30,
-                    long_polling_timeout=30,
-                    skip_pending=True,
-                    none_stop=True
-                )
-                break
-            except Exception as e:
-                self.logger.error(f"Polling attempt {attempt+1} failed: {e}")
-                if attempt < max_retries - 1:
-                    self.logger.info(f"Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
-                    retry_delay *= 2
-                else:
-                    self.logger.error("Max retries reached. Bot failed to start.")
-                    raise
 
     def run(self):
         """Main run method"""
