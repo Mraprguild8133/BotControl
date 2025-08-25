@@ -3,6 +3,7 @@ Configuration settings for the bot
 """
 
 import os
+from typing import Optional
 
 # Bot Token from BotFather
 BOT_TOKEN = os.getenv('BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')
@@ -12,6 +13,17 @@ CONTACT_INFO = {
     'telegram': '@Sathishkumar33',
     'developer': 'Sathish Kumar'
 }
+
+# Database Configuration
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///bot.db")
+
+# Movie API Configuration
+TMDB_API_KEY = os.getenv("TMDB_API_KEY", "")
+OMDB_API_KEY = os.getenv("OMDB_API_KEY", "")
+
+# Google Vision API Configuration
+AI_API_KEY  = os.getenv("AI_API_KEY", "")  # Google Vision API Key
+GOOGLE_VISION_API_URL: str = "https://vision.googleapis.com/v1/images:annotate"
 
 # Channel Information
 MOVIE_SEARCH_CHANNEL = 'https://t.me/mraprmoviesrequest'
