@@ -18,7 +18,6 @@ RUN apt-get update && apt-get install -y \
 COPY pyproject.toml ./
 RUN pip install --no-cache-dir .
 
-
 # Copy application code
 COPY . .
 
