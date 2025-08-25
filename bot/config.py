@@ -7,10 +7,6 @@ import os
 # Bot Token from BotFather
 BOT_TOKEN = os.getenv('BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')
 
-# Server settings
-        self.HOST = os.getenv("HOST", "0.0.0.0")
-        self.PORT = int(os.getenv("PORT", "8000"))
-
 # Contact Information
 CONTACT_INFO = {
     'telegram': '@Sathishkumar33',
