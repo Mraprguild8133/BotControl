@@ -9,9 +9,7 @@ import logging
 import asyncio
 import threading
 import sys
-from flask import Flask, render_template, jsonify, request
-from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy.orm import DeclarativeBase
+from flask import Flask, render_template, jsonify, request 
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 from aiohttp import web
 from aiohttp.web_runner import GracefulExit
@@ -29,14 +27,7 @@ from bot.channel_manager import (
     channel_stats_handler
 )
 from bot.copyright_filter import message_filter_handler, add_keyword_handler, remove_keyword_handler, list_keywords_handler, test_ai_detection_handler
-from bot.config import BOT_TOKEN, DATABASE_URL
-from bot.database import Database
-
-# Database setup
-class Base(DeclarativeBase):
-    pass
-
-db = SQLAlchemy(model_class=Base)
+from bot.config import BOT_TOKEN
 
 # Configure logging
 def setup_logger(name):
@@ -68,9 +59,6 @@ class MaprGuildMovieBot:
         if not BOT_TOKEN:
             self.logger.error("BOT_TOKEN environment variable not set!")
             raise ValueError("BOT_TOKEN environment variable not set!")
-        
-        # Initialize database
-        self.db = Database(DATABASE_URL)
         
         # Create Telegram application
         self.application = Application.builder().token(BOT_TOKEN).build()
@@ -150,16 +138,8 @@ class MaprGuildMovieBot:
             
             # Setup Flask-SQLAlchemy
             app.secret_key = os.environ.get("FLASK_SECRET_KEY", "a_secret_key_for_bot")
-            app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
-            app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
-                "pool_recycle": 300,
-                "pool_pre_ping": True,
-            }
-            db.init_app(app)
-            
-            with app.app_context():
-                import models  # Import models to create tables
-                db.create_all()
+            DATA_DIR = 'data'
+            DATABASE_FILE = os.path.join(DATA_DIR, 'bot_data.json')
             
             @app.route("/")
             def index():
