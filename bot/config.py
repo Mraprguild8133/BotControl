@@ -6,6 +6,7 @@ import os
 
 # Bot Token from BotFather
 BOT_TOKEN = os.getenv('BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')
+PORT = os.getenv('5000")
 
 # Contact Information
 CONTACT_INFO = {
