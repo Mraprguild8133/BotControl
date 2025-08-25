@@ -1,331 +1,299 @@
 """
-Database operations and management
+Database operations and data management
 """
 
-import sqlite3
-import logging
-import psycopg2
-from psycopg2.extras import RealDictCursor
-from typing import Optional, List, Dict, Any
-from datetime import datetime
 import json
+import os
+import logging
+from datetime import datetime
+from typing import Dict, List, Optional, Any
 
-class Database:
-    """Database manager for bot operations"""
+from .config import DATA_DIR, DATABASE_FILE
+
+logger = logging.getLogger(__name__)
+
+def ensure_data_directory():
+    """Ensure data directory exists"""
+    if not os.path.exists(DATA_DIR):
+        os.makedirs(DATA_DIR)
+
+def load_json_file(filename: str, default_data: dict = None) -> dict:
+    """Load JSON data from file"""
+    ensure_data_directory()
+    filepath = os.path.join(DATA_DIR, filename)
     
-    def __init__(self, database_url: str):
-        self.database_url = database_url
-        self.logger = logging.getLogger(__name__)
-        self.connection = None
-        self._connect()
-        self._initialize_tables()
+    try:
+        if os.path.exists(filepath):
+            with open(filepath, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        else:
+            return default_data if default_data is not None else {}
+    except (json.JSONDecodeError, IOError) as e:
+        logger.error(f"Error loading {filename}: {e}")
+        return default_data if default_data is not None else {}
+
+def save_json_file(filename: str, data: dict) -> bool:
+    """Save JSON data to file"""
+    ensure_data_directory()
+    filepath = os.path.join(DATA_DIR, filename)
     
-    def _connect(self):
-        """Establish database connection"""
-        try:
-            if self.database_url.startswith('postgresql://') or self.database_url.startswith('postgres://'):
-                # PostgreSQL connection
-                self.connection = psycopg2.connect(self.database_url)
-                self.connection.autocommit = True
-                self.logger.info("Connected to PostgreSQL database")
-            else:
-                # SQLite connection
-                db_path = self.database_url.replace('sqlite:///', '')
-                self.connection = sqlite3.connect(db_path, check_same_thread=False)
-                self.connection.row_factory = sqlite3.Row
-                self.logger.info("Connected to SQLite database")
-        except Exception as e:
-            self.logger.error(f"Database connection failed: {e}")
-            raise
+    try:
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        return True
+    except (IOError, TypeError) as e:
+        logger.error(f"Error saving {filename}: {e}")
+        return False
+
+def get_welcome_message() -> dict:
+    """Get current welcome message configuration"""
+    from .config import DEFAULT_WELCOME_MESSAGE, DEFAULT_BOTTOM_TEXT
     
-    def _initialize_tables(self):
-        """Create database tables if they don't exist"""
-        try:
-            cursor = self.connection.cursor()
-            
-            # Users table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    id SERIAL PRIMARY KEY,
-                    user_id BIGINT UNIQUE NOT NULL,
-                    username VARCHAR(100),
-                    first_name VARCHAR(100),
-                    last_name VARCHAR(100),
-                    is_admin BOOLEAN DEFAULT FALSE,
-                    is_banned BOOLEAN DEFAULT FALSE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Channels table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS channels (
-                    id SERIAL PRIMARY KEY,
-                    channel_id BIGINT UNIQUE NOT NULL,
-                    channel_name VARCHAR(200),
-                    channel_username VARCHAR(100),
-                    added_by BIGINT NOT NULL,
-                    is_active BOOLEAN DEFAULT TRUE,
-                    welcome_message TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Keywords table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS keywords (
-                    id SERIAL PRIMARY KEY,
-                    keyword VARCHAR(500) NOT NULL,
-                    added_by BIGINT NOT NULL,
-                    is_active BOOLEAN DEFAULT TRUE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Blocked messages table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS blocked_messages (
-                    id SERIAL PRIMARY KEY,
-                    user_id BIGINT NOT NULL,
-                    channel_id BIGINT NOT NULL,
-                    message_text TEXT,
-                    reason VARCHAR(500),
-                    blocked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Bot stats table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS bot_stats (
-                    id SERIAL PRIMARY KEY,
-                    stat_name VARCHAR(100) UNIQUE NOT NULL,
-                    stat_value VARCHAR(500),
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Movie searches table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS movie_searches (
-                    id SERIAL PRIMARY KEY,
-                    user_id BIGINT NOT NULL,
-                    search_query VARCHAR(500) NOT NULL,
-                    results_count INTEGER DEFAULT 0,
-                    searched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            self.connection.commit()
-            self.logger.info("Database tables initialized successfully")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to initialize tables: {e}")
-            raise
+    default_config = {
+        'message': DEFAULT_WELCOME_MESSAGE,
+        'bottom_text': DEFAULT_BOTTOM_TEXT,
+        'last_updated': datetime.now().isoformat()
+    }
     
-    def add_user(self, user_id: int, username: str = None, first_name: str = None, last_name: str = None) -> bool:
-        """Add or update user in database"""
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("""
-                INSERT INTO users (user_id, username, first_name, last_name, last_seen)
-                VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
-                ON CONFLICT (user_id) DO UPDATE SET
-                    username = EXCLUDED.username,
-                    first_name = EXCLUDED.first_name,
-                    last_name = EXCLUDED.last_name,
-                    last_seen = CURRENT_TIMESTAMP
-            """, (user_id, username, first_name, last_name))
-            self.connection.commit()
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to add user: {e}")
-            return False
+    return load_json_file('welcome_config.json', default_config)
+
+def set_welcome_message(message: str, bottom_text: str = None) -> bool:
+    """Set welcome message configuration"""
+    current_config = get_welcome_message()
     
-    def is_admin(self, user_id: int) -> bool:
-        """Check if user is admin"""
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("SELECT is_admin FROM users WHERE user_id = %s", (user_id,))
-            result = cursor.fetchone()
-            return result and result[0] if result else False
-        except Exception as e:
-            self.logger.error(f"Failed to check admin status: {e}")
-            return False
+    config = {
+        'message': message,
+        'bottom_text': bottom_text if bottom_text is not None else current_config.get('bottom_text', ''),
+        'last_updated': datetime.now().isoformat()
+    }
     
-    def add_admin(self, user_id: int) -> bool:
-        """Add admin to database"""
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("UPDATE users SET is_admin = TRUE WHERE user_id = %s", (user_id,))
-            self.connection.commit()
-            return cursor.rowcount > 0
-        except Exception as e:
-            self.logger.error(f"Failed to add admin: {e}")
-            return False
+    return save_json_file('welcome_config.json', config)
+
+def get_bot_stats() -> dict:
+    """Get bot statistics"""
+    stats_file = 'bot_stats.json'
+    default_stats = {
+        'channels': 0,
+        'keywords': 0,
+        'users': 0,
+        'messages': 0,
+        'searches': 0,
+        'downloads': 0,
+        'uptime': '0 days',
+        'memory': '0 MB',
+        'last_updated': datetime.now().isoformat()
+    }
     
-    def remove_admin(self, user_id: int) -> bool:
-        """Remove admin from database"""
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("UPDATE users SET is_admin = FALSE WHERE user_id = %s", (user_id,))
-            self.connection.commit()
-            return cursor.rowcount > 0
-        except Exception as e:
-            self.logger.error(f"Failed to remove admin: {e}")
-            return False
+    return load_json_file(stats_file, default_stats)
+
+def update_bot_stats(stat_name: str, increment: int = 1) -> bool:
+    """Update bot statistics"""
+    stats = get_bot_stats()
     
-    def get_admins(self) -> List[Dict]:
-        """Get list of all admins"""
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("SELECT user_id, username, first_name, last_name FROM users WHERE is_admin = TRUE")
-            return [dict(row) for row in cursor.fetchall()]
-        except Exception as e:
-            self.logger.error(f"Failed to get admins: {e}")
-            return []
+    if stat_name in stats:
+        if isinstance(stats[stat_name], (int, float)):
+            stats[stat_name] += increment
+        stats['last_updated'] = datetime.now().isoformat()
+        return save_json_file('bot_stats.json', stats)
     
-    def add_channel(self, channel_id: int, channel_name: str, channel_username: str, added_by: int) -> bool:
-        """Add channel to database"""
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("""
-                INSERT INTO channels (channel_id, channel_name, channel_username, added_by)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (channel_id) DO UPDATE SET
-                    channel_name = EXCLUDED.channel_name,
-                    channel_username = EXCLUDED.channel_username,
-                    is_active = TRUE
-            """, (channel_id, channel_name, channel_username, added_by))
-            self.connection.commit()
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to add channel: {e}")
-            return False
+    return False
+
+def add_user_activity(user_id: int, activity: str, details: dict = None) -> bool:
+    """Log user activity"""
+    activity_file = 'user_activity.json'
+    activities = load_json_file(activity_file, {'activities': []})
     
-    def remove_channel(self, channel_id: int) -> bool:
-        """Remove channel from database"""
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("UPDATE channels SET is_active = FALSE WHERE channel_id = %s", (channel_id,))
-            self.connection.commit()
-            return cursor.rowcount > 0
-        except Exception as e:
-            self.logger.error(f"Failed to remove channel: {e}")
-            return False
+    new_activity = {
+        'user_id': user_id,
+        'activity': activity,
+        'timestamp': datetime.now().isoformat(),
+        'details': details if details is not None else {}
+    }
     
-    def get_channels(self) -> List[Dict]:
-        """Get list of active channels"""
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("SELECT * FROM channels WHERE is_active = TRUE")
-            return [dict(row) for row in cursor.fetchall()]
-        except Exception as e:
-            self.logger.error(f"Failed to get channels: {e}")
-            return []
+    activities['activities'].append(new_activity)
     
-    def add_keyword(self, keyword: str, added_by: int) -> bool:
-        """Add copyright keyword"""
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("INSERT INTO keywords (keyword, added_by) VALUES (%s, %s)", (keyword.lower(), added_by))
-            self.connection.commit()
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to add keyword: {e}")
-            return False
+    # Keep only last 1000 activities
+    if len(activities['activities']) > 1000:
+        activities['activities'] = activities['activities'][-1000:]
     
-    def remove_keyword(self, keyword: str) -> bool:
-        """Remove copyright keyword"""
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("UPDATE keywords SET is_active = FALSE WHERE keyword = %s", (keyword.lower(),))
-            self.connection.commit()
-            return cursor.rowcount > 0
-        except Exception as e:
-            self.logger.error(f"Failed to remove keyword: {e}")
-            return False
+    return save_json_file(activity_file, activities)
+
+def get_user_stats(user_id: int) -> dict:
+    """Get statistics for a specific user"""
+    activity_file = 'user_activity.json'
+    activities = load_json_file(activity_file, {'activities': []})
     
-    def get_keywords(self) -> List[str]:
-        """Get list of active keywords"""
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("SELECT keyword FROM keywords WHERE is_active = TRUE")
-            return [row[0] for row in cursor.fetchall()]
-        except Exception as e:
-            self.logger.error(f"Failed to get keywords: {e}")
-            return []
+    user_activities = [a for a in activities['activities'] if a['user_id'] == user_id]
     
-    def log_blocked_message(self, user_id: int, channel_id: int, message_text: str, reason: str) -> bool:
-        """Log blocked message"""
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("""
-                INSERT INTO blocked_messages (user_id, channel_id, message_text, reason)
-                VALUES (%s, %s, %s, %s)
-            """, (user_id, channel_id, message_text, reason))
-            self.connection.commit()
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to log blocked message: {e}")
-            return False
+    stats = {
+        'total_activities': len(user_activities),
+        'searches': len([a for a in user_activities if a['activity'] == 'movie_search']),
+        'downloads': len([a for a in user_activities if a['activity'] == 'download_request']),
+        'commands': len([a for a in user_activities if a['activity'] == 'command_used']),
+        'last_activity': user_activities[-1]['timestamp'] if user_activities else 'Never',
+        'first_seen': user_activities[0]['timestamp'] if user_activities else 'Never'
+    }
     
-    def log_movie_search(self, user_id: int, search_query: str, results_count: int) -> bool:
-        """Log movie search"""
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("""
-                INSERT INTO movie_searches (user_id, search_query, results_count)
-                VALUES (%s, %s, %s)
-            """, (user_id, search_query, results_count))
-            self.connection.commit()
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to log movie search: {e}")
-            return False
+    return stats
+
+def store_search_result(query: str, results: List[dict], user_id: int) -> bool:
+    """Store movie search results for analytics"""
+    search_file = 'search_history.json'
+    searches = load_json_file(search_file, {'searches': []})
     
-    def get_total_users(self) -> int:
-        """Get total user count"""
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("SELECT COUNT(*) FROM users")
-            return cursor.fetchone()[0]
-        except Exception as e:
-            self.logger.error(f"Failed to get user count: {e}")
-            return 0
+    search_entry = {
+        'query': query,
+        'user_id': user_id,
+        'results_count': len(results),
+        'timestamp': datetime.now().isoformat(),
+        'results': results[:5]  # Store only first 5 results
+    }
     
-    def get_total_channels(self) -> int:
-        """Get total channel count"""
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("SELECT COUNT(*) FROM channels WHERE is_active = TRUE")
-            return cursor.fetchone()[0]
-        except Exception as e:
-            self.logger.error(f"Failed to get channel count: {e}")
-            return 0
+    searches['searches'].append(search_entry)
     
-    def get_total_keywords(self) -> int:
-        """Get total keyword count"""
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("SELECT COUNT(*) FROM keywords WHERE is_active = TRUE")
-            return cursor.fetchone()[0]
-        except Exception as e:
-            self.logger.error(f"Failed to get keyword count: {e}")
-            return 0
+    # Keep only last 500 searches
+    if len(searches['searches']) > 500:
+        searches['searches'] = searches['searches'][-500:]
     
-    def get_blocked_messages_count(self) -> int:
-        """Get blocked messages count"""
-        try:
-            cursor = self.connection.cursor()
-            cursor.execute("SELECT COUNT(*) FROM blocked_messages")
-            return cursor.fetchone()[0]
-        except Exception as e:
-            self.logger.error(f"Failed to get blocked messages count: {e}")
-            return 0
+    return save_json_file(search_file, searches)
+
+def get_popular_searches(limit: int = 10) -> List[dict]:
+    """Get most popular search queries"""
+    search_file = 'search_history.json'
+    searches = load_json_file(search_file, {'searches': []})
     
-    def close(self):
-        """Close database connection"""
-        if self.connection:
-            self.connection.close()
-            self.logger.info("Database connection closed")
+    # Count search queries
+    query_counts = {}
+    for search in searches['searches']:
+        query = search['query'].lower()
+        query_counts[query] = query_counts.get(query, 0) + 1
+    
+    # Sort by count and return top results
+    popular = sorted(query_counts.items(), key=lambda x: x[1], reverse=True)
+    
+    return [
+        {'query': query, 'count': count}
+        for query, count in popular[:limit]
+    ]
+
+def store_download_request(movie_name: str, user_id: int, success: bool) -> bool:
+    """Store download request for analytics"""
+    download_file = 'download_history.json'
+    downloads = load_json_file(download_file, {'downloads': []})
+    
+    download_entry = {
+        'movie_name': movie_name,
+        'user_id': user_id,
+        'success': success,
+        'timestamp': datetime.now().isoformat()
+    }
+    
+    downloads['downloads'].append(download_entry)
+    
+    # Keep only last 1000 downloads
+    if len(downloads['downloads']) > 1000:
+        downloads['downloads'] = downloads['downloads'][-1000:]
+    
+    return save_json_file(download_file, downloads)
+
+def get_download_stats() -> dict:
+    """Get download statistics"""
+    download_file = 'download_history.json'
+    downloads = load_json_file(download_file, {'downloads': []})
+    
+    total_downloads = len(downloads['downloads'])
+    successful_downloads = len([d for d in downloads['downloads'] if d['success']])
+    failed_downloads = total_downloads - successful_downloads
+    
+    # Most requested movies
+    movie_counts = {}
+    for download in downloads['downloads']:
+        movie = download['movie_name'].lower()
+        movie_counts[movie] = movie_counts.get(movie, 0) + 1
+    
+    popular_movies = sorted(movie_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+    
+    return {
+        'total_downloads': total_downloads,
+        'successful_downloads': successful_downloads,
+        'failed_downloads': failed_downloads,
+        'success_rate': (successful_downloads / total_downloads * 100) if total_downloads > 0 else 0,
+        'popular_movies': [
+            {'movie': movie, 'requests': count}
+            for movie, count in popular_movies
+        ]
+    }
+
+def cleanup_old_data(days: int = 30) -> bool:
+    """Clean up old data files"""
+    try:
+        cutoff_date = datetime.now().timestamp() - (days * 24 * 60 * 60)
+        
+        # Files to clean up
+        files_to_clean = [
+            'user_activity.json',
+            'search_history.json',
+            'download_history.json'
+        ]
+        
+        for filename in files_to_clean:
+            filepath = os.path.join(DATA_DIR, filename)
+            if os.path.exists(filepath):
+                data = load_json_file(filename, {})
+                
+                if 'activities' in data:
+                    # Clean user activities
+                    data['activities'] = [
+                        a for a in data['activities']
+                        if datetime.fromisoformat(a['timestamp']).timestamp() > cutoff_date
+                    ]
+                
+                elif 'searches' in data:
+                    # Clean search history
+                    data['searches'] = [
+                        s for s in data['searches']
+                        if datetime.fromisoformat(s['timestamp']).timestamp() > cutoff_date
+                    ]
+                
+                elif 'downloads' in data:
+                    # Clean download history
+                    data['downloads'] = [
+                        d for d in data['downloads']
+                        if datetime.fromisoformat(d['timestamp']).timestamp() > cutoff_date
+                    ]
+                
+                save_json_file(filename, data)
+        
+        logger.info(f"Cleaned up data older than {days} days")
+        return True
+    
+    except Exception as e:
+        logger.error(f"Error cleaning up old data: {e}")
+        return False
+
+def backup_data(backup_name: str = None) -> bool:
+    """Create backup of all data files"""
+    try:
+        if backup_name is None:
+            backup_name = f"backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        backup_dir = os.path.join(DATA_DIR, 'backups')
+        if not os.path.exists(backup_dir):
+            os.makedirs(backup_dir)
+        
+        # Copy all JSON files to backup directory
+        for filename in os.listdir(DATA_DIR):
+            if filename.endswith('.json'):
+                source = os.path.join(DATA_DIR, filename)
+                destination = os.path.join(backup_dir, f"{backup_name}_{filename}")
+                
+                with open(source, 'r') as src, open(destination, 'w') as dst:
+                    dst.write(src.read())
+        
+        logger.info(f"Data backed up as {backup_name}")
+        return True
+    
+    except Exception as e:
+        logger.error(f"Error creating backup: {e}")
+        return False
+
