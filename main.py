@@ -169,33 +169,20 @@ class MaprGuildMovieBot:
             PORT = int(os.environ.get("PORT", 5000))
             ENVIRONMENT = os.environ.get("ENVIRONMENT", "development")
             
-            if ENVIRONMENT == "production":
-                self.logger.info("🚀 Running in production mode")
-                app.run(host="0.0.0.0", port=PORT, debug=False)
-            else:
-                self.logger.info("🔧 Running in development mode")
-                app.run(host="0.0.0.0", port=PORT, debug=True)
-                
-        except KeyboardInterrupt:
-            self.logger.info("Bot stopped by user")
-        except Exception as e:
-            self.logger.error(f"Fatal error: {e}")
-            raise
-        finally:
-            self.running = False
-            self.db.close()
-            self.logger.info("🛑 Bot shutdown complete")
+               
+        # Start health check server in separate thread
+        health_thread = threading.Thread(target=run_health_server)
+        health_thread.daemon = True
+        health_thread.start()
+        
+        # Start bot with polling in main thread
+        logger.info("Starting bot polling in production mode")
+        application.run_polling()
+    else:
+        # Development mode: Use polling only
+        logger.info("Running in development mode with polling")
+        application.run_polling()
 
-def main():
-    """Main entry point"""
-    try:
-        bot = MaprGuildMovieBot()
-        bot.run()
-    except Exception as e:
-        logger = setup_logger(__name__)
-        logger.error(f"Failed to start bot: {e}")
-        sys.exit(1)
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
-            
+    
