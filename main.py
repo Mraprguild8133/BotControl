@@ -135,4 +135,31 @@ def main():
 
             # Keep the health check server alive
             try:
+          while True:
+                    await asyncio.sleep(10)
+            except (KeyboardInterrupt, GracefulExit):
+                logger.info("Stopping health check server...")
+            finally:
+                await runner.cleanup()
+
+        # Start health check server in background
+        def run_health_server():
+            asyncio.run(start_production_server())
+
+        # Start health check server in separate thread
+        health_thread = threading.Thread(target=run_health_server)
+        health_thread.daemon = True
+        health_thread.start()
+
+        # Start bot with polling in main thread
+        logger.info("Starting bot polling in production mode")
+        application.run_polling()
+
+    else:
+        # Development mode: Use polling only
+        logger.info("Running in development mode with polling")
+        application.run_polling()
+
+if __name__ == '__main__':
+    main()
     
