@@ -18,23 +18,22 @@ RUN apt-get update && apt-get install -y \
 COPY pyproject.toml ./
 RUN pip install --no-cache-dir .
 
+
 # Copy application code
 COPY . .
 
-# Create data directory for persistent storage
-RUN mkdir -p /app/data
+# Create necessary directories
+RUN mkdir -p templates static logs
 
-# Expose port for web interface
+# Set permissions
+RUN chmod +x main.py
+
+# Expose port
 EXPOSE 5000
-
-# Create non-root user for security
-RUN useradd -m -s /bin/bash botuser && \
-    chown -R botuser:botuser /app
-USER botuser
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:5000/ || exit 1
+    CMD curl -f http://localhost:5000/health || exit 1
 
-# Default command (can be overridden)
+# Run the application
 CMD ["python", "main.py"]
