@@ -24,7 +24,6 @@ from bot.channel_manager import (
     channel_stats_handler
 )
 from bot.copyright_filter import message_filter_handler, add_keyword_handler, remove_keyword_handler, list_keywords_handler, test_ai_detection_handler
-from bot.config import BOT_TOKEN, PORT  # Added PORT import here
 
 # Configure logging
 logging.basicConfig(
@@ -37,6 +36,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Configuration
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+PORT = int(os.environ.get("PORT", 5000))
+
 async def health_check(request):
     """Health check endpoint for Render.com"""
     return web.Response(text="Bot is running", status=200)
@@ -45,8 +48,26 @@ async def webhook_handler(request):
     """Handle webhook updates from Telegram"""
     return web.Response(text="Webhook received", status=200)
 
-def main():
-    """Start the bot"""
+async def start_production_server(port):
+    """Start health check server for production"""
+    # Create web application for health checks
+    web_app = web.Application()
+    web_app.router.add_get("/health", health_check)
+    web_app.router.add_post("/webhook", webhook_handler)
+    
+    # Create and start web server for health checks
+    runner = web.AppRunner(web_app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    
+    logger.info(f"Health check server started on 0.0.0.0:{port}")
+    logger.info("Bot running in production mode with polling + health server")
+    
+    return runner
+
+async def run_bot():
+    """Run the Telegram bot"""
     if not BOT_TOKEN:
         logger.error("BOT_TOKEN environment variable not set!")
         return
@@ -107,51 +128,40 @@ def main():
     
     application.add_error_handler(error_handler)
     
-    logger.info("Bot started successfully!")
+    logger.info("Bot handlers configured successfully!")
     
-    # Check if running in production (Render.com) or development
+    # Check if running in production or development
     if ENVIRONMENT == "production":
-        # Production mode: Run health check server alongside polling
-        async def start_production_server():
-            # Create web application for health checks
-            web_app = web.Application()
-            web_app.router.add_get("/health", health_check)
-            web_app.router.add_post("/webhook", webhook_handler)
+        # Start health check server
+        runner = await start_production_server(PORT)
+        
+        try:
+            # Start the bot with polling
+            logger.info("Starting bot polling in production mode")
+            await application.initialize()
+            await application.start()
+            await application.updater.start_polling()
             
-            # Create and start web server for health checks
-            runner = web.AppRunner(web_app)
-            await runner.setup()
-            site = web.TCPSite(runner, "0.0.0.0", PORT)
-            await site.start()
-            
-            logger.info(f"Health check server started on 0.0.0.0:{PORT}")
-            logger.info("Bot running in production mode with polling + health server")
-            
-            # Keep the health check server alive
-            try:
-                while True:
-                    await asyncio.sleep(10)
-            except (KeyboardInterrupt, GracefulExit):
-                logger.info("Stopping health check server...")
-            finally:
-                await runner.cleanup()
-        
-        # Start both the bot and health check server
-        loop = asyncio.get_event_loop()
-        
-        # Create a task for the health check server
-        health_task = loop.create_task(start_production_server())
-        
-        # Start the bot with polling
-        logger.info("Starting bot polling in production mode")
-        application.run_polling()
-        
-        # Wait for the health task to complete (though it shouldn't)
-        loop.run_until_complete(health_task)
+            # Keep both services running
+            while True:
+                await asyncio.sleep(3600)  # Sleep for 1 hour
+                
+        except (KeyboardInterrupt, GracefulExit):
+            logger.info("Shutting down bot and health server...")
+        finally:
+            # Cleanup
+            await application.updater.stop()
+            await application.stop()
+            await application.shutdown()
+            await runner.cleanup()
     else:
         # Development mode: Use polling only
         logger.info("Running in development mode with polling")
-        application.run_polling()
+        await application.run_polling()
+
+def main():
+    """Main entry point"""
+    asyncio.run(run_bot())
 
 if __name__ == '__main__':
     main()
